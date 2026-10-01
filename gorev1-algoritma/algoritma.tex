@@ -1,0 +1,727 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{turkish}
+\setmainfont{Carlito}
+\setmonofont[Scale=0.86]{DejaVu Sans Mono}
+
+\usepackage[a4paper,margin=2.4cm,headsep=0.7cm]{geometry}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{float}
+
+\definecolor{koyu}{RGB}{30,45,70}
+\definecolor{gri}{RGB}{110,110,110}
+
+\titleformat{\section}{\large\bfseries\color{koyu}}{\thesection.}{0.6em}{}
+\titlespacing{\section}{0pt}{1.4em}{0.7em}
+
+\captionsetup{font=small,labelfont={bf,color=koyu},skip=6pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small\color{gri}Sistem Algoritması Tasarımı}
+\rhead{\small\color{gri}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\setlength{\parskip}{0.55em}
+\setlength{\parindent}{0pt}
+\setlist{itemsep=0.25em,topsep=0.3em}
+
+\newcommand{\ey}[1]{\texttt{#1}}
+
+\begin{document}
+
+\begin{center}
+{\Large\bfseries\color{koyu} Sistem Algoritması Tasarımı}\\[0.4em]
+{\large Robot Kol ve Otonom Araç}\\[1.1em]
+{\small TEKNOFEST 2026 Mesleki Yetenek Yarışması\\
+Akıllı Fabrika Sistemleri Programlama Kategorisi, Yarı Final Görev 1}\\[0.6em]
+{\small\color{gri} Takım: andromeda}
+\end{center}
+
+\vspace{1.2em}
+
+Bu doküman robot kol ile otonom aracı birlikte çalıştıran algoritmayı anlatıyor.
+İçinde sistemin genel işleyişi, dört akış şeması, tam sözde kod, tasarım
+kararlarının gerekçeleri ve dayandığımız varsayımlar var.
+
+Tasarımda yalnızca bize verilen hazır eylemleri kullandık. Bunların dışında
+hiçbir donanım çağrısı, sensör erişimi ya da kütüphane fonksiyonu varsaymadık.
+
+\vspace{0.8em}
+
+\section{Sistemin genel işleyişi}
+
+Sistemde üç ayrı denetleyici var ve bunlar iki farklı kanaldan haberleşiyor.
+PLC hattı yönetiyor ve robot kola tek bir dijital başla sinyali gönderiyor.
+Sinyali K10 rölesinin kuru kontağı taşıyor, Arduino'nun A5 ucunu şaseye
+çekiyor. Robot kol küpün
+rengini görüntü işlemeyle belirliyor, küpü araca yüklüyor ve rengi MQTT
+üzerinden \ey{arac/yuk} konusuna yayınlıyor. Otonom araç da bu rengi dinliyor,
+küpün üzerinde olduğunu MZ80 ile doğruluyor, sonra pist görevlerini tamamlayıp
+renge uygun park alanına giriyor.
+
+İki sürecin ömrü farklı ve bu ayrım tasarımın temeli. Robot kol süreci sonsuz
+döngü, konveyöre küp geldikçe çevrim tekrarlanıyor. Otonom araç süreci ise tek
+görevlik, park etmesiyle birlikte sona eriyor.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.97\textwidth]{sema_sistem.pdf}
+\caption{Sistem etkileşim diyagramı}
+\end{figure}
+
+\clearpage
+
+\section{Kullandığımız hazır eylemler}
+
+Aşağıdaki iki tabloda bize verilen hazır eylemlerin tamamı ve her birini bu
+tasarımda nerede kullandığımız var. Tasarım bu kümenin dışına çıkmıyor.
+
+\subsection*{Robot kol}
+
+\begin{longtable}{@{}p{3.4cm}p{4.1cm}p{7.2cm}@{}}
+\toprule
+\textbf{Eylem} & \textbf{Ne yapar} & \textbf{Nerede kullandık} \\
+\midrule
+\endhead
+\ey{home()} & Tüm eksenleri referans konumuna götürür. &
+Sadece başlangıçta bir kez. Güç açılışında kolun nerede durduğunu bilmiyoruz. \\
+\addlinespace
+\ey{git("GORME")} & Öğretilmiş poza gider. &
+Bekleme pozu, kamera buradan konveyör çıkışını görüyor. Yüklemeden sonra da
+güvenli poz olarak aynı yere dönüyoruz. \\
+\addlinespace
+\ey{git("AL")} & & Küpü kavrama pozu. \\
+\addlinespace
+\ey{git("YUKLE")} & & Küpü araca bırakma pozu. \\
+\addlinespace
+\ey{tut()} & Tutucuyu kapatır. & AL pozunda, küpü kavramak için. \\
+\addlinespace
+\ey{birak()} & Tutucuyu açar. &
+YUKLE pozunda küpü bırakırken. Ayrıca başlangıçta tutucuyu boşaltmak için. \\
+\addlinespace
+\ey{renk\_oku()} & RED, GREEN, BLUE veya UNKNOWN döndürür. &
+GORME pozunda üç kez çağırıp çoğunluk oyu alıyoruz (Şekil 4). \\
+\addlinespace
+\ey{basla\_geldi()} & PLC başla sinyali, True veya False. &
+Çevrim başında beklemek için, bir de çevrim sonunda sinyalin düşmesini
+beklemek için. \\
+\addlinespace
+\ey{araca\_gonder(renk)} & Rengi MQTT ile araca bildirir. &
+Çevrimin en son adımı, kol güvenli poza çekildikten sonra. \\
+\bottomrule
+\end{longtable}
+
+\subsection*{Otonom araç}
+
+\begin{longtable}{@{}p{3.4cm}p{4.1cm}p{7.2cm}@{}}
+\toprule
+\textbf{Eylem} & \textbf{Ne yapar} & \textbf{Nerede kullandık} \\
+\midrule
+\endhead
+\ey{yuk\_rengi\_bekle()} & MQTT'den renk gelene kadar bekler. &
+Birinci şart. Bloklayıcı olduğu için süreç burada duruyor. \\
+\addlinespace
+\ey{yuk\_algilandi()} & MZ80 küpü gördüyse True. &
+İkinci şart. Sağlanana kadar yokluyoruz, araç hareket etmiyor. \\
+\addlinespace
+\ey{ilerle()} & Aracı ilerletir. &
+Yalnızca iki şart birlikte sağlandıktan sonra, bir de her duruşun ardından. \\
+\addlinespace
+\ey{dur()} & Aracı durdurur. &
+Başlangıçta, kırmızı ışıkta, yaya ve tümsek görevlerinde, park sonunda. \\
+\addlinespace
+\ey{bekle(sn)} & Verilen süre kadar bekletir. &
+Yoklama aralığı, tabelaya yaklaşma süresi ve görev süreleri. \\
+\addlinespace
+\ey{isik\_oku()} & KIRMIZI, YESIL veya YOK döndürür. &
+Trafik ışığı alt yordamında (Şekil 5). \\
+\addlinespace
+\ey{tabela\_oku()} & YAYA, TUMSEK, PARK veya YOK döndürür. &
+Görev döngüsünün her turunda, kilitleme mantığıyla (Şekil 3). \\
+\addlinespace
+\ey{park\_et(renk)} & Verilen renkteki park alanına park eder. &
+PARK tabelası işlendiğinde, görevin son adımı. \\
+\bottomrule
+\end{longtable}
+
+\subsection*{Sabitler}
+
+\begin{longtable}{@{}p{4.2cm}p{1.5cm}p{9cm}@{}}
+\toprule
+\textbf{Sabit} & \textbf{Değer} & \textbf{Neden bu değer} \\
+\midrule
+\endhead
+\ey{YAKLASMA\_SN} & 1,5 s &
+Tabela kamerada belli bir mesafeden görünüyor. Sabit süre ilerlemek görevi her
+seferinde aynı noktada uygulamamızı sağlıyor. Saha denemesiyle ayarlanacak. \\
+\addlinespace
+\ey{YAYA\_BEKLEME\_SN} & 3,0 s &
+Yaya geçidindeki tam duruşun dışarıdan net görülebilmesi için. \\
+\addlinespace
+\ey{TUMSEK\_BEKLEME\_SN} & 1,0 s &
+Hız kesmenin eldeki eylemlerle en yakın karşılığı. Varsayım V-3'e bakınız. \\
+\addlinespace
+\ey{RENK\_DENEME\_MAX} & 5 &
+Renk okumada tekrar üst sınırı, sonsuz döngüye girmemek için. \\
+\addlinespace
+\ey{YOKLAMA\_SN} & 0,1 s &
+Beklerken işlemciyi meşgul etmemek için. 100 ms'lik tepki gecikmesi bu hat
+hızında fark etmiyor. \\
+\bottomrule
+\end{longtable}
+
+\clearpage
+
+\section{Robot kol akış şeması}
+
+\begin{figure}[H]
+\centering
+\includegraphics[height=0.82\textheight,keepaspectratio]{sema_robot.pdf}
+\caption{Robot kol akış şeması}
+\end{figure}
+
+\clearpage
+
+\section{Otonom araç akış şeması}
+
+\begin{figure}[H]
+\centering
+\includegraphics[height=0.82\textheight,keepaspectratio]{sema_arac.pdf}
+\caption{Otonom araç akış şeması}
+\end{figure}
+
+\clearpage
+
+\section{Alt yordamlar}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{sema_renk.pdf}
+\caption{Alt yordam: \ey{RENK\_OKU\_GUVENLI()}}
+\end{figure}
+
+\vspace{1.2em}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{sema_isik.pdf}
+\caption{Alt yordam: \ey{TRAFIK\_ISIGI\_KONTROL()}}
+\end{figure}
+
+\clearpage
+
+\section{Sözde kod}
+
+Aşağıdaki sözde kod Şekil 2 ve Şekil 3'teki akış şemalarının birebir karşılığı.
+İki süreç fiziksel olarak ayrı denetleyicilerde eşzamanlı koşuyor: kol tarafında
+Arduino ile Jetson, araç tarafında Jetson ile ESP32. Aralarındaki tek bağ MQTT
+mesajı.
+
+\subsection*{Sabitler}
+
+\begin{verbatim}
+SABITLER
+    YAKLASMA_SN        <- 1.5   # tabela goruldukten sonra yaklasma suresi
+    YAYA_BEKLEME_SN    <- 3.0   # yaya gecidinde tam durus
+    TUMSEK_BEKLEME_SN  <- 1.0   # tumsekte hiz kesme
+    RENK_DENEME_MAX    <- 5
+    YOKLAMA_SN         <- 0.1
+    GECERLI_RENKLER    <- { "RED", "GREEN", "BLUE" }
+\end{verbatim}
+
+\subsection*{Süreç A: robot kol, sonsuz döngü}
+
+\begin{verbatim}
+YORDAM ROBOT_KOL_ANA()
+
+    # ---- Baslangic. Dongunun disinda, yalnizca bir kez ---------------
+    home()                    # konum bilinmiyor, referansa git
+    birak()                   # tutucuda kup kalmis olabilir
+    git("GORME")              # kameranin konveyoru gordugu bekleme pozu
+
+    DONGU SONSUZ                                                   # (A)
+
+        # ---- 1) PLC'nin basla sinyalini bekle --------------------
+        # Sinyal, kup konveyor cikisindayken VE arac yukleme
+        # noktasinda dururken geliyor. Bu sarti PLC garanti ediyor,
+        # kol ayrica kontrol etmiyor.
+        WHILE NOT basla_geldi()
+            bekle(YOKLAMA_SN)
+        END WHILE
+
+        # ---- 2) Rengi guvenli bicimde oku ------------------------
+        renk <- RENK_OKU_GUVENLI()
+
+        EGER renk GECERLI_RENKLER icinde DEGILSE
+            # Yanlis renk yanlis park alani demek. Tahmin etmek
+            # yerine cevrimi kesiyoruz.
+            HATA_BILDIR("renk belirlenemedi")
+            # kup ALINMAZ, araca hicbir sey GONDERILMEZ
+
+        DEGILSE
+            # ---- 3) Kupu al ve araca yukle ----------------------
+            git("AL")
+            tut()
+            git("YUKLE")
+            birak()
+
+            # ---- 4) Kolu guvenli poza cek, ANCAK SONRA bildir --
+            # Sira kritik: arac, renk bildirimini alir almaz
+            # hareket edebiliyor.
+            git("GORME")
+            araca_gonder(renk)
+        END EGER
+
+        # ---- 5) Ayni sinyalle ikinci cevrimi onle ---------------
+        # PLC sinyali SEVIYE olarak suruyor. Dusmesini beklemezsek
+        # bos bir cevrim daha baslatiyoruz.
+        WHILE basla_geldi()
+            bekle(0.05)
+        END WHILE
+
+    END DONGU                                     # -> (A) dongu basi
+
+END YORDAM
+\end{verbatim}
+
+\subsection*{Alt yordam: RENK\_OKU\_GUVENLI}
+
+\begin{verbatim}
+ALT YORDAM RENK_OKU_GUVENLI() -> renk
+    deneme <- 0
+    WHILE deneme < RENK_DENEME_MAX
+        o1 <- renk_oku()
+        o2 <- renk_oku()
+        o3 <- renk_oku()
+        c  <- COGUNLUK(o1, o2, o3)   # ucunden en az ikisinde ayni
+                                     # olan deger, yoksa YOK doner
+        EGER c, YOK ve "UNKNOWN" degilse ISE
+            DONDUR c
+        END EGER
+        deneme <- deneme + 1
+    END WHILE
+    DONDUR "UNKNOWN"           # 5 denemede de kararsiz, hata cagrisi
+END ALT YORDAM
+\end{verbatim}
+
+\clearpage
+
+\subsection*{Süreç B: otonom araç, tek görevlik}
+
+\begin{verbatim}
+YORDAM OTONOM_ARAC_ANA()
+
+    dur()                         # baslangicta kesinlikle hareketsiz
+
+    # ---- Birinci sart: MQTT'den renk bildirimi, bloklayici -------
+    renk <- yuk_rengi_bekle()
+
+    # ---- Ikinci sart: MZ80 kupu fiziksel olarak algilamali -------
+    WHILE NOT yuk_algilandi()
+        dur()
+        bekle(YOKLAMA_SN)
+    END WHILE
+
+    # Buraya ancak IKI SART DA saglandiginda geliniyor.
+    ilerle()
+    son_tabela <- "YOK"
+
+    DONGU SONSUZ                                                # (C)
+
+        # ---- Trafik isigi her turda kontrol ediliyor ---------
+        TRAFIK_ISIGI_KONTROL()
+
+        t <- tabela_oku()
+
+        # ---- Kilit acma: tabela gorus alanindan cikti --------
+        EGER t = "YOK" ISE
+            son_tabela <- "YOK"
+            DEVAM
+        END EGER
+
+        # ---- Kilit: ayni tabela ikinci kez islenmiyor --------
+        # Bir tabela kamerada onlarca kare gorunuyor. Kilit
+        # olmadan arac ayni gorevi defalarca uyguluyor.
+        EGER t = son_tabela ISE
+            DEVAM
+        END EGER
+
+        son_tabela <- t                                  # kilitle
+        bekle(YAKLASMA_SN)        # tabela uzaktan gorunur, yaklas
+
+        SEC t
+            DURUM "PARK":
+                dur()
+                park_et(renk)     # renk birinci sarttan geldi
+                dur()
+                CIK DONGU              # arac TEK GOREVLIKTIR
+
+            DURUM "YAYA":
+                dur()
+                bekle(YAYA_BEKLEME_SN)      # tam durus
+                ilerle()
+
+            DURUM "TUMSEK":
+                dur()
+                bekle(TUMSEK_BEKLEME_SN)    # hiz kesme, bkz. V-3
+                ilerle()
+        END SEC
+
+    END DONGU                              # -> (C) gorev dongusu
+
+    # Gorev tamamlandi, surec burada sona eriyor.
+
+END YORDAM
+\end{verbatim}
+
+\subsection*{Alt yordam: TRAFIK\_ISIGI\_KONTROL}
+
+\begin{verbatim}
+ALT YORDAM TRAFIK_ISIGI_KONTROL()
+
+    EGER isik_oku() "KIRMIZI" DEGILSE
+        DONDUR             # isik yok veya yesil, ilerlemeye devam
+    END EGER
+
+    # Kirmizi gorundu.
+    dur()
+    WHILE isik_oku() "YESIL" DEGIL   # CIKIS SARTI YALNIZCA "YESIL"
+        bekle(YOKLAMA_SN)            # "YOK" okumak GECME IZNI DEGIL
+    END WHILE
+    ilerle()
+
+END ALT YORDAM
+\end{verbatim}
+
+\clearpage
+
+\section{Tasarım kararları}
+
+Görev tanımında cevaplanması istenen on iki karar noktası var. Aşağıda her
+birini, verdiğimiz kararla birlikte neden başka türlü yapmadığımızı da
+anlatarak yanıtladık.
+
+\subsection*{Robot kol}
+
+\textbf{Sistem ilk açıldığında, döngüye girmeden önce yapılması gereken bir şey
+var mı?}
+
+Var, üç adım: \ey{home()}, sonra \ey{birak()}, sonra \ey{git("GORME")}. Üçü de
+döngünün dışında ve yalnızca bir kez çalışıyor.
+
+\ey{home()} gerekiyor çünkü güç kesintisi ya da acil duruş sonrası kol herhangi
+bir pozda kalmış olabilir. Öğretilmiş pozlara güvenli bir yörünge ancak bilinen
+bir referans noktasından üretilebiliyor. Bu adımı atlarsak ilk hareket
+öngörülemez bir yoldan geçiyor ve konveyöre ya da araca çarpma riski doğuyor.
+
+\ey{birak()} koyduk çünkü önceki çevrim yükleme anında kesilmişse tutucuda küp
+kalmış olabilir. Tutucu kapalıyken \ey{tut()} çağırmak yeni küpü kavramıyor ve
+çevrim sessizce boşa dönüyor.
+
+\ey{git("GORME")} ise renk okumasının bu pozda yapılacak olması yüzünden.
+Böylece kol sinyali beklerken zaten doğru yerde duruyor. Sinyal geldikten sonra
+poza gitmek çevrim süresine gereksiz hareket ekliyor, süre de finalde ayrı bir
+puan kalemi.
+
+\textbf{Başla sinyalini beklemeyi nasıl kurguladınız?}
+
+Yoklamalı bekleme kullandık: \ey{WHILE NOT basla\_geldi(): bekle(0.1)}.
+
+Sinyali PLC seviye olarak sürüyor, yani K10 rölesi robot çevrimi boyunca çekili
+kalıyor. Dolayısıyla beklediğimiz şey sinyalin gelmesi değil, var olması.
+\ey{bekle(0.1)} ile araya boşluk koymamız sıkı döngünün işlemciyi gereksiz
+meşgul etmesini önlüyor. 100 ms'lik tepki gecikmesi bu hattın çevrim süresi
+yanında önemsiz.
+
+Beklemenin ikinci yarısı çevrimin sonunda: iş bittikten sonra sinyalin düşmesini
+bekliyoruz. İkisi birlikte bir kenar yakalama davranışı üretiyor.
+
+\textbf{Rengi ne zaman ve kaç kez okursunuz? UNKNOWN gelirse ne olur?}
+
+Kol GORME pozundayken, yani küp konveyör çıkışında dururken ve kavramadan önce
+okuyoruz. Kavradıktan sonra okumanın iki riski var: tutucu küpün bir yüzünü
+kapatabiliyor, kolun gövdesi de küpün üzerine gölge düşürebiliyor. HSV eşikleri
+gölgeye duyarlı olduğu için bu iki durum da okumayı bozuyor.
+
+Üç kez okuyup çoğunluk oyu alıyoruz (Şekil 4). Tek okuma o anki parlamadan veya
+otomatik pozlama dalgalanmasından etkilenebiliyor. Üç okumadan ikisinin aynı
+çıkması rastgele gürültüyü büyük ölçüde eliyor, maliyeti de birkaç yüz
+milisaniye.
+
+UNKNOWN gelirse okumayı en fazla beş kez tekrarlıyoruz. Beş denemede de karar
+verilemezse küpü almıyoruz ve araca hiçbir şey göndermiyoruz, çevrimi hata
+bildirimiyle kesiyoruz.
+
+Tahmin etmemeyi bilerek seçtik. Renk, aracın hangi park alanına gideceğini
+belirliyor. Yanlış bir renk göndermek aracı yola çıkarıp görevi hatalı
+tamamlatıyor. Bu, hiç başlatmamaktan daha kötü, çünkü hatayı ancak parkta fark
+ediyoruz ve o noktada düzeltmek mümkün olmuyor. Ayrıca UNKNOWN çoğu zaman küpün
+yanlış konumlandığını gösteriyor, bu da operatör müdahalesi isteyen fiziksel bir
+sorun.
+
+\textbf{Alma ve yükleme hangi sırayla yapılır?}
+
+\ey{git("AL")}, \ey{tut()}, \ey{git("YUKLE")}, \ey{birak()}, \ey{git("GORME")}.
+
+Her hareket komutu ile tutucu komutu arasında sıra bağımlılığı var. Kol hedefe
+varmadan tutucu kapanırsa küp kavranmıyor, hedefe varmadan açılırsa küp yanlış
+yere düşüyor. Bu yüzden \ey{tut()} yalnızca AL pozuna varıldıktan,
+\ey{birak()} yalnızca YUKLE pozuna varıldıktan sonra çağrılıyor.
+
+Sondaki \ey{git("GORME")} iki işi birden yapıyor: bir sonraki çevrimin bekleme
+pozunu hazırlıyor ve kolu aracın hareket koridorundan çıkarıyor.
+
+\textbf{Rengi araca ne zaman gönderirsiniz?}
+
+Çevrimin en son adımında, küp bırakıldıktan ve kol GORME pozuna çekildikten
+sonra. Tasarımdaki en kritik sıralama kararı bu.
+
+Araç iki şartla hareket ediyor: MZ80'in küpü algılaması ve renk bildiriminin
+gelmesi. Küp araca bırakıldığı anda MZ80 zaten aktif oluyor. Rengi o anda
+gönderirsek ikinci şart da sağlanıyor ve araç hemen hareket ediyor. Oysa kol
+henüz araç üzerinden çekilmemiş durumda. Sonuç: araç inen kolun altından
+kayıyor, küp devriliyor veya kol ile araç çarpışıyor.
+
+Bildirimi en sona almak bu çarpışmayı bir zamanlama ayarına değil, algoritmanın
+yapısına bağlıyor. Bir faydası daha var: renk erken gönderilip kavrama
+sonradan başarısız olsaydı araç boş yola çıkmış olurdu. Bu sıralama onu da
+imkânsız kılıyor.
+
+\textbf{Kol geri döndüğünde sinyal hâlâ aktifse veya değilse ne olur?}
+
+Sinyal hâlâ aktifse bu yeni bir küp geldiği anlamına gelmiyor. PLC sinyali
+seviye olarak sürüyor ve küp banttan kalkıp BP2 sensörü boşalana kadar çekili
+kalabiliyor. Bu yüzden algoritma önce sinyalin düşmesini bekliyor:
+\ey{WHILE basla\_geldi(): bekle(0.05)}. Bu adım olmasa aynı küp için ikinci bir
+çevrim başlıyor, kol boş bir kavrama yapıyor ve araca ikinci kez renk
+gönderiyor.
+
+Sinyal düşmüşse doğrudan döngü başına dönüyoruz ve yeni sinyali bekliyoruz.
+İkisi birlikte kenar yakalama davranışı üretiyor: düşen kenar, ardından
+yükselen kenar. Seviye sinyaliyle çalışan her el sıkışmanın standart çözümü bu.
+
+\textbf{Süreç nasıl tekrarlanır, nerede başlar nereye döner?}
+
+Başlangıç bloğu döngünün dışında ve program ömrü boyunca bir kez çalışıyor.
+Döngü Şekil 2'de A ile işaretli noktadan başlıyor, sinyalin düşmesi
+beklendikten sonra yine A'ya dönüyor.
+
+Hata dalı da aynı noktaya dönüyor ama doğrudan değil, önce sinyalin düşmesini
+bekleyerek. Böylece hata sonrasında da aynı küp için sonsuz tekrar oluşmuyor.
+
+Görev tanımı çevrimin konveyöre küp geldikçe sürekli tekrarlanmasını istediği
+için döngünün çıkışı yok, süreç yalnızca güç kesildiğinde sona eriyor.
+
+\subsection*{Otonom araç}
+
+\textbf{Araç ne zaman harekete başlar? İki şarttan yalnızca biri sağlanırsa ne
+olur?}
+
+Araç yalnızca iki şart birlikte sağlandığında hareket ediyor. Birincisi
+\ey{yuk\_rengi\_bekle()} fonksiyonunun MQTT'den bir renk döndürmesi, ikincisi
+\ey{yuk\_algilandi()} değerinin True olması, yani MZ80'in küpü fiziksel olarak
+görmesi.
+
+Yalnızca renk gelirse küp araca yüklenmemiş demektir. Kavrama başarısız olmuş
+ya da küp düşmüş olabilir. Araç boş yola çıkarsa görevi tamamlıyor ama yükü
+taşımıyor, bu da görevin amacını ortadan kaldırıyor. O yüzden \ey{dur()}
+konumunda bekliyor.
+
+Yalnızca MZ80 algılarsa küp araçta ama rengini bilmiyoruz. Renk, park alanı
+seçiminin tek girdisi, onsuz araç nereye gideceğini bilemiyor. Rastgele bir
+parka gitmek beklemekten kötü olurdu, o yüzden bekliyor.
+
+Algoritmadaki sıra bilinçli: önce bloklayıcı \ey{yuk\_rengi\_bekle()}, sonra
+\ey{yuk\_algilandi()} yoklaması. Renk zaten kol tarafından en son gönderildiği
+için, renk geldiğinde küp fiziksel olarak araçta olmuş oluyor. İkinci kontrol
+bunun doğrulaması.
+
+\textbf{Kırmızıda beklemeyi nasıl kurguladınız? Yeşile dönüşü nasıl
+anlıyorsunuz?}
+
+Ayrı bir alt yordamda ele aldık (Şekil 5). Mantık iki aşamalı. Okuma KIRMIZI
+değilse hiçbir şey yapmıyoruz, araç ilerlemeye devam ediyor. Okuma KIRMIZI ise
+\ey{dur()} çağırıp bekleme döngüsüne giriyoruz. Bu döngüden çıkış şartı yalnızca
+YESIL okumak.
+
+Buradaki kritik ayrım şu: YOK geçme izni değil. \ey{isik\_oku()} üç değer
+döndürüyor ve YOK ışığın görülemediğini söylüyor, söndüğünü değil. Kırmızıda
+beklerken araç titreşimi, güneş yansıması veya anlık bir algılama kaybı YOK
+üretebiliyor. Çıkış şartını "KIRMIZI değil" diye yazsaydık araç kırmızı ışıkta
+geçerdi. Bu kesin olarak yasak, o yüzden çıkış şartını olumlu biçimde YESIL
+olarak yazdık.
+
+Zaman aşımı bilerek koymadık. Işık arızalanırsa araç süresiz bekliyor.
+Alternatif, yani belirli bir süre sonra geçmek, kural ihlali riskini yapısal
+hâle getirirdi. Beklemek kural ihlalinden daha düşük maliyetli bir başarısızlık.
+
+\textbf{Tabela görüldüğü an mı durulur, yaklaşınca mı? Aynı tabela iki kez
+görülürse ne olur?}
+
+Görüldüğü an durmuyoruz. Tabela kamerada belli bir mesafeden görünüyor, o anda
+durursak yaya geçidinin metrelerce önünde durmuş oluyoruz ve görev doğru yerde
+uygulanmıyor. Bunun yerine tabela algılandığında araç \ey{YAKLASMA\_SN} kadar
+ilerlemeye devam ediyor, görevi sonra uyguluyor. Kameranın görüş mesafesi ve
+aracın hızı sabit olduğu için bu süre tekrarlanabilir bir konum veriyor, saha
+denemesiyle ayarlanacak.
+
+Aynı tabela iki kez görülürse diye kilit koyduk. Bir tabela, araç ona
+yaklaşırken onlarca ardışık karede görünüyor. Kilit olmasa araç aynı yaya
+geçidinde defalarca durup kalkardı. Çözüm \ey{son\_tabela} değişkeni: bir
+tabela işlendiğinde türü buraya yazılıyor, aynı tür tekrar okunduğu sürece
+hiçbir şey yapılmıyor, \ey{tabela\_oku()} YOK döndürdüğünde yani tabela görüş
+alanından çıktığında kilit açılıyor.
+
+Bu yaklaşım pistte aynı türden ikinci bir tabela bulunmasını da doğru işliyor.
+Araç birinci tabelayı geçiyor, arada YOK okuyor, kilit açılıyor ve ikinci tabela
+normal şekilde işleniyor.
+
+\textbf{Park yeri neye göre seçilir? Renk bilgisi hiç gelmezse araç ne yapar?}
+
+Park yeri tek bir girdiye göre seçiliyor: sürecin başında
+\ey{yuk\_rengi\_bekle()} ile aldığımız renk. PARK tabelası işlendiğinde
+\ey{park\_et(renk)} çağrılıyor. Rengi bir kez alıp değişkende tuttuğumuz için
+park anında yeniden okumaya veya MQTT'ye ihtiyaç yok. Bu sayede park sırasında
+olası bir ağ kesintisi görevi etkilemiyor.
+
+Renk hiç gelmezse araç zaten hiç hareket etmemiş oluyor.
+\ey{yuk\_rengi\_bekle()} bloklayıcı, süreç orada duruyor ve \ey{ilerle()}
+çağrısına asla ulaşılmıyor. Yani "araç yolda ama rengi bilmiyor" durumu bu
+tasarımda oluşamıyor. Sorunu çalışma zamanında çözmek yerine akış yapısıyla
+ortadan kaldırmış oluyoruz.
+
+\textbf{Park tamamlanınca ne olur?}
+
+\ey{park\_et(renk)} döndükten sonra \ey{dur()} çağırıp görev döngüsünden
+çıkıyoruz. Araç süreci sona eriyor, yeni bir görev beklemiyor. Görev tanımı da
+aracın tek görevlik olduğunu ve park ile birlikte duracağını söylüyor. Sondaki
+\ey{dur()}, \ey{park\_et()} içindeki son manevradan sonra artık hiçbir hareket
+komutunun kalmadığını garanti ediyor.
+
+Burada iki sürecin ömrü ayrışıyor. Robot kol döngüsü devam ediyor ve konveyöre
+gelen sonraki küp için yeniden başla sinyali bekliyor. Sistem bir bütün olarak
+çalışmaya devam ediyor, duran yalnızca o aracın görevi.
+
+\clearpage
+
+\section{Güvenlik kurallarına uyum}
+
+Görev tanımının sonunda üç kesin kural var. Aşağıdaki tablo her kuralı
+algoritmada nerede ve nasıl karşıladığımızı gösteriyor.
+
+\begin{longtable}{@{}p{4.3cm}p{3.2cm}p{7.2cm}@{}}
+\toprule
+\textbf{Kural} & \textbf{Karşılandığı yer} & \textbf{Nasıl} \\
+\midrule
+\endhead
+Araç yerinde değilken yükleme yapılmamalı, başla sinyali bunu garanti ediyor. &
+Robot kol, adım 1, \ey{basla\_geldi()} &
+Kol araç varlığını kendisi sorgulamıyor. PLC, BP2 (küp) ve BP4 (araç)
+sensörlerinin ikisini birden sağladığında sinyali veriyor. Kol yalnızca bu
+sinyale bakıyor. Tek doğrulama noktası olduğu için çift kontrolden kaynaklanan
+tutarsızlık riski de yok. \\
+\addlinespace
+MZ80 algılaması ve renk bildirimi birlikte sağlanmadan araç hareket etmemeli. &
+Otonom araç, birinci ve ikinci şart &
+\ey{ilerle()} çağrısına hem \ey{yuk\_rengi\_bekle()} döndükten hem de
+\ey{yuk\_algilandi()} True olduktan sonra ulaşılıyor. Tek şartla ilerleyen
+hiçbir yol yok. Bu bir zamanlama tercihi değil, akışın kendi yapısı. \\
+\addlinespace
+Kırmızı ışıkta kesinlikle geçilmemeli. &
+\ey{TRAFIK\_ISIGI\_KONTROL()} &
+Bekleme döngüsünden çıkış şartı yalnızca YESIL okumak. YOK okumak beklemeyi
+sürdürüyor. Zaman aşımıyla geçiş yolunu bilerek koymadık. \\
+\bottomrule
+\end{longtable}
+
+\section{Varsayımlar}
+
+Aşağıdakiler görev tanımında doğrudan belirtilmeyen ama tasarımın dayandığı
+noktalar. Her birinin yanında, aksi ortaya çıkarsa algoritmanın hangi tek
+noktasında değişiklik gerekeceğini de yazdık.
+
+\begin{longtable}{@{}p{0.9cm}p{6.6cm}p{7.2cm}@{}}
+\toprule
+\textbf{No} & \textbf{Varsayım} & \textbf{Aksi hâlde değişecek yer} \\
+\midrule
+\endhead
+V-1 &
+\ey{tabela\_oku()} dönüş kümesi YAYA, TUMSEK, PARK ve YOK olarak verilmiş,
+HEMZEMIN bu kümede yok. Görev 5 kapsamında hemzemin sınıfını da eğittik ama
+Görev 1'in hazır eylemi onu döndürmediği için akışta hemzemin dalı yok. &
+Finalde hemzemin bir görev olarak eklenirse Şekil 3'teki tabela dallanmasına
+tek bir \ey{DURUM "HEMZEMIN"} satırı ekleniyor. Kilitleme ve yaklaşma mantığı
+aynen geçerli kalıyor. \\
+\addlinespace
+V-2 &
+\ey{bekle(sn)} bloklayıcı ve bekleme sırasında araç son verilen hareket
+komutunu koruyor. Yani \ey{ilerle()} sonrası \ey{bekle()} çağrısı boyunca araç
+ilerlemeye devam ediyor. &
+Bu yüzden yaya ve tümsek dallarında görev önce \ey{dur()} ile başlıyor. Aksi
+davranışta, yani bekleme sırasında otomatik duruş olursa, yalnızca
+\ey{YAKLASMA\_SN} yorumu değişiyor. \\
+\addlinespace
+V-3 &
+Hazır eylemler arasında hız ayarı yok, yalnızca \ey{ilerle()} ve \ey{dur()}
+var. Tümsek tabelasının beklenen davranışı olan hız kesmeyi, eldeki eylemlerle
+en yakın karşılık olan kısa duraklamayla modelledik. &
+Finalde bir hız komutu verilirse \ey{dur()}, \ey{bekle(1)}, \ey{ilerle()}
+üçlüsü tek bir yavaş ilerleme çağrısıyla değiştiriliyor. \\
+\addlinespace
+V-4 &
+\ey{basla\_geldi()} seviye sinyali. PLC'nin K10 kontağı robot çevrimi boyunca
+kapalı kalıyor ve küp banttan kalkınca açılıyor. &
+Sinyal darbe olsaydı çevrim sonundaki bekleme döngüsü gereksiz kalırdı. Yine de
+zararsız, çünkü darbe zaten hemen düşüyor. \\
+\addlinespace
+V-5 &
+\ey{yuk\_rengi\_bekle()} bloklayıcı ve \ey{arac/yuk} konusuna gelen ilk mesajı
+döndürüyor. &
+Birden fazla mesaj gelirse ilki esas alınıyor. Kol bir çevrimde tek mesaj
+gönderdiği için bu durum zaten oluşmuyor. \\
+\addlinespace
+V-6 &
+Şerit takibi aracın alt seviye kontrolünde sürekli çalışıyor, \ey{ilerle()}
+"şeridi takip ederek ilerle" anlamında. Şerit takibi bu algoritmanın konusu
+değil. &
+Şerit kaybı ayrı bir hata durumu olarak ele alınırsa görev döngüsüne bir
+kontrol adımı ekleniyor. \\
+\addlinespace
+V-7 &
+Robot kolun GORME, AL ve YUKLE pozları önceden öğretilmiş ve aralarındaki
+yörünge çarpışmasız. &
+Bu üç poz hazır kabul edildiği için ara nokta tanımlamadık. \\
+\bottomrule
+\end{longtable}
+
+\section{Özet}
+
+Bu algoritmayı ayırt eden üç karar var.
+
+Birincisi, renk bildirimini çevrimin en son adımına koymamız. Araç ancak kol
+güvenli poza çekildikten sonra hareket edebiliyor, yani kol ile araç
+çarpışmasını bir zamanlama ayarına değil akışın sırasına bağladık.
+
+İkincisi, kırmızı ışıktan çıkış şartını olumlu yazmamız. "KIRMIZI değil" yerine
+"YESIL" dedik, böylece algılama kaybının kural ihlaline dönüşmesi imkânsız hâle
+geldi.
+
+Üçüncüsü, tabela işlemeyi kilitli yapmamız. Bir tabela ancak görüş alanından
+çıkıp yeniden girdiğinde tekrar işleniyor, aynı görev ardışık karelerde
+defalarca tetiklenmiyor.
+
+Üçünde de aynı yaklaşımı izledik: hata olasılığını çalışma anında kontrol
+etmeye çalışmak yerine akışın yapısıyla ortadan kaldırmak.
+
+\end{document}

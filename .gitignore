@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pt
+dataset/
+runs/
+egitim_ciktisi/

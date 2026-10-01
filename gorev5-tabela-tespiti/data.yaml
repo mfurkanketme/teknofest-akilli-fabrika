@@ -1,0 +1,11 @@
+# Veri seti depoda yok. Kendi veri setinizin klasörünü "path" alanına yazın.
+path: dataset
+train: train/images
+val: val/images
+
+nc: 4
+names:
+  0: yaya
+  1: tumsek
+  2: hemzemin
+  3: park
