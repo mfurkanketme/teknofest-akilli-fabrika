@@ -15,7 +15,7 @@ Takım: andromeda (Mehmet Furkan Ketme, Furkan Karslı). Yarı finalde 2., final
 | `gorev2-step-motor` | Step motoru bilgisayardan süren arayüz | Python, tkinter, pyserial, Arduino, AccelStepper |
 | `gorev3-renk-algilama` | Kameradan kırmızı, yeşil ve mavi küp algılama | OpenCV |
 | `gorev4-mqtt` | Robot kol ile araç arasında renk bilgisinin iletilmesi | MQTT, mosquitto, paho-mqtt |
-| `gorev5-tabela-tespiti` | Trafik tabelası tespiti için model eğitimi ve canlı tespit | YOLO26, Ultralytics |
+| `gorev5-tabela-tespiti` | Trafik tabelası tespiti için model eğitimi ve canlı tespit | YOLOv8, Ultralytics |
 | Görev 6 | Üretim hattının PLC programı ve operatör paneli (depoda yok) | TIA Portal V17 |
 
 ## Görev 2: Step motor kontrolü
@@ -66,7 +66,7 @@ birkaç araç yazdık:
 - `veri_hazirla.py`: her sınıfın hem eğitim hem doğrulama kümesinde bulunması için
   tabakalı ayrım yapıp `data.yaml` üretiyor.
 
-Model YOLO26-L tabanından 100 epoch eğitildi (imgsz 640, batch otomatik).
+Model YOLOv8-L tabanından 100 epoch eğitildi (imgsz 640, batch otomatik).
 Doğrulama kümesinde mAP50 0,952.
 
 ![Eğitim eğrileri](docs/egitim_grafik.png)

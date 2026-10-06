@@ -4,13 +4,13 @@ TEKNOFEST 2026 - Akilli Fabrika Sistemleri Programlama
 Gorev 5: Tabela tespiti icin YOLO egitimi
 
 EGITIM AYARLARI:
-    Taban model : yolo26l
+    Taban model : yolov8l
     Epochs      : 100
     Batch size  : -1  (otomatik)
     Image size  : 640
 
 Bu degerleri bilerek sabit yazdik, komut satirindan degistirilemiyor. Farkli
-surum veya boyutla (yolo26n/s/m/x, YOLOv8 gibi) egitilen modeller kabul
+surum veya boyutla (yolov8n/s/m/x gibi) egitilen modeller kabul
 edilmediginden riske girmedik.
 
 Kullanim:
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 # --- Egitim ayarlari, degistirilmiyor -------------------------------------
-TABAN_MODEL = "yolo26l.pt"
+TABAN_MODEL = "yolov8l.pt"
 EPOCHS      = 100
 BATCH       = -1        # -1 = GPU belleginin %60'ina gore otomatik
 IMGSZ       = 640
@@ -42,12 +42,12 @@ def ortam_kontrol() -> str:
         vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"GPU : {ad}  ({vram:.1f} GB VRAM)")
         if vram < 6:
-            print("UYARI: yolo26l + batch=-1 icin 6 GB'tan az VRAM risklidir.")
+            print("UYARI: yolov8l + batch=-1 icin 6 GB'tan az VRAM risklidir.")
             print("       'CUDA out of memory' alirsaniz once diger GPU")
             print("       uygulamalarini kapatin (tarayici, oyun, Docker).")
         return "0"
 
-    print("!! GPU BULUNAMADI - CPU ile 100 epoch yolo26l pratikte bitmez.")
+    print("!! GPU BULUNAMADI - CPU ile 100 epoch yolov8l pratikte bitmez.")
     print("   Kontrol: nvidia-smi calisiyor mu? torch CUDA surumu dogru mu?")
     print("   Dogru kurulum ornegi (CUDA 12.1):")
     print("     pip install torch --index-url https://download.pytorch.org/whl/cu121")
